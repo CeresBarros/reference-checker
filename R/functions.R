@@ -1,49 +1,53 @@
-## --------------------------------------------------------------------------------------------
-## Functions and flow built with the help of MS365 Copilot, powered by ChatGPT 5.0
-## --------------------------------------------------------------------------------------------
 
-# Purpose: Accept full citation strings; resolve to DOI via Crossref; verify existence in Web of Science (Starter API).
-
-suppressPackageStartupMessages({
-  Require::Require(
-    c("httr",
-      "jsonlite",
-      "readr",
-      "stringr",
-      "dplyr",
-      "rcrossref",   # Crossref API client  [5](https://docs.ropensci.org/rcrossref/reference/cr_works.html",
-      "stringdist")  # for fuzzy title matching
-  )
-})
-
-# ---- Config ----
-WOS_API_KEY <- Sys.getenv("WOS_API_KEY")
-if (WOS_API_KEY == "") stop("WOS_API_KEY environment variable is not set.")
-
-BASE_URL_WOS <- "https://api.clarivate.com/apis/wos-starter/v1/documents"  # Starter API /documents  [3](https://developer.clarivate.com/apis/wos-starter/swagger)
-
-# Optional: identify your email to Crossref per etiquette (improves reliability)  [4](https://github.com/CrossRef/rest-api-doc)
-CROSSREF_MAILTO <- Sys.getenv("CROSSREF_MAILTO", unset = NA_character_)
-if (!is.na(CROSSREF_MAILTO) && CROSSREF_MAILTO != "") {
-  # Set polite pool contact
-  cr_ua(paste0("wos-existence-check/1.0 (mailto:", CROSSREF_MAILTO, ")"))
-}
-
-# ---- Utilities ----
+#' Null-coalescing operator
+#'
+#' Returns `a` unless it is `NULL` or has length zero, in which case returns `b`.
+#'
+#' @param a First object to test.
+#' @param b Fallback value if `a` is `NULL` or empty.
+#' @return `a` if non-null and non-empty, otherwise `b`.
 `%||%` <- function(a, b) if (is.null(a) || length(a) == 0) b else a
+
+#' Polite pause between API calls
+#'
+#' Sleeps for a short interval to respect API rate limits.
+#'
+#' @return Invisibly returns `NULL`.
 polite_pause <- function() Sys.sleep(0.25)
 
+#' Extract DOI from a citation string
+#'
+#' Searches for a DOI pattern in the input string, handling lowercase and URL prefixes.
+#'
+#' @param x Character string containing a citation.
+#' @return A DOI string if found, otherwise `NA_character_`.
+#' @importFrom stringr str_match str_replace
 extract_doi <- function(x) {
   m <- str_match(x, "(10\\.\\d{4,9}/[-._;()/:a-zA-Z0-9]+)")[,2]
   ifelse(is.na(m), NA_character_, m)
 }
 
-# Try to guess a year (1800-2100) to aid TI+PY fallback
+#' Guess publication year from a citation string
+#'
+#' Extracts a four-digit year between 1800 and 2100.
+#'
+#' @param x Character string containing a citation.
+#' @return Integer year if found, otherwise `NA_integer_`.
+#' @importFrom stringr str_match
 guess_year <- function(x) {
   m <- str_match(x, "(18|19|20|21)\\d{2}")[,1]
   ifelse(is.na(m), NA_integer_, as.integer(m))
 }
 
+#' Guess article title from a citation string
+#'
+#' Attempts to extract the title using quotes or heuristics:
+#' removes authors/year, splits by punctuation, and selects the longest fragment.
+#'
+#' @param x Character string containing a citation.
+#' @return A cleaned title string.
+#' @importFrom stringr str_match str_replace str_split str_squish
+#' @importFrom dplyr coalesce
 guess_title <- function(x) {
   t1 <- str_match(x, "\"([^\"]+)\"")[,2]
   t2 <- str_match(x, "“([^”]+)”")[,2]
@@ -63,6 +67,14 @@ guess_title <- function(x) {
   return(title)
 }
 
+#' Guess article title from a citation string
+#'
+#' Attempts to extract the title using quotes or heuristics:
+#' removes authors/year, splits by punctuation, and selects the longest fragment.
+#'
+#' @param x Character string containing a citation.
+#' @return A cleaned title string.
+#' @importFrom stringr str_replace_all str_squish
 normalize_title <- function(x) {
   x |>
     tolower() |>
@@ -70,8 +82,19 @@ normalize_title <- function(x) {
     str_squish()
 }
 
-# ---- Crossref resolution from a full citation string ----
-# Uses Crossref 'query.bibliographic' to return likely works, then picks best by title similarity and year proximity.  [1](https://community.crossref.org/t/rest-api-works-query-bibliographic/3203)[5](https://docs.ropensci.org/rcrossref/reference/cr_works.html)
+#' Resolve DOI via Crossref bibliographic query
+#'
+#' Uses Crossref REST API to find candidate works for a full citation string.
+#' Scores candidates by Jaro-Winkler similarity and year proximity.
+#'
+#' @param citation Full citation string.
+#' @param max_candidates Maximum number of candidates to retrieve.
+#' @param title_sim_threshold Minimum Jaro-Winkler similarity to accept.
+#' @param year_tol Year tolerance for matching.
+#' @return List with `doi`, `title`, `year`, and `debug` info.
+#' @importFrom rcrossref cr_works
+#' @importFrom dplyr transmute mutate arrange
+#' @importFrom stringdist stringdist
 resolve_via_crossref <- function(citation, max_candidates = 5, title_sim_threshold = 0.80, year_tol = 2) {
   # Call Crossref: query.bibliographic
   # In rcrossref, pass field queries via 'flq' (fielded query).  [5](https://docs.ropensci.org/rcrossref/reference/cr_works.html)
@@ -115,15 +138,24 @@ resolve_via_crossref <- function(citation, max_candidates = 5, title_sim_thresho
   )
 }
 
-# ---- Web of Science query wrappers (Starter API) ----
-# Documentation for Starter API parameters (db, q, limit, detail) and field tags (DO, TI, PY).  [3](https://developer.clarivate.com/apis/wos-starter/swagger)
+#' Query Web of Science Starter API
+#'
+#' Sends a GET request to the Starter API `/documents` endpoint and retrieves metadata for the first hit.
+#'
+#' @param q Query string using supported field tags (e.g., DO, TI, PY).
+#' @param db Database code (default "WOS" for Core Collection).
+#' @param limit Maximum number of hits to return.
+#' @param detail Level of detail ("short" or "full").
+#' @return List with `total` and `hit` (or `NULL` if no match).
+#' @importFrom httr GET add_headers content status_code
+#' @importFrom jsonlite fromJSON
 query_wos_starter <- function(q, db = "WOS", limit = 1, detail = "short") {
-  browser()
   resp <- GET(
     url   = BASE_URL_WOS,
     query = list(db = db, q = q, limit = limit, detail = detail),
     add_headers(`X-ApiKey` = WOS_API_KEY)
   )
+  polite_pause()
   if (status_code(resp) == 401) stop("Unauthorized (401). Check WOS_API_KEY and plan.")
   if (status_code(resp) == 429) { warning("HTTP 429 Too Many Requests."); return(NULL) }
   if (status_code(resp) >= 500) { warning("Server error."); return(NULL) }
@@ -152,10 +184,14 @@ query_wos_starter <- function(q, db = "WOS", limit = 1, detail = "short") {
       wos_url = hit$links$record %||% NA_character_
     )
   )
-  polite_pause()
 }
 
-# Build the best-available Web of Science query from a full citation string.
+#' Build best Web of Science query from a citation
+#'
+#' Chooses query strategy: DOI if present, else Crossref DOI resolution, else title/year fallback.
+#'
+#' @param full_citation Full citation string.
+#' @return List with `mode`, `q`, `key`, and `via` (strategy used).
 build_best_wos_query <- function(full_citation) {
 
   doi <- extract_doi(full_citation)
@@ -181,6 +217,16 @@ build_best_wos_query <- function(full_citation) {
   list(mode = "TITLE", q = q, key = title, via = "fallback_TI_PY")
 }
 
+#' Verify existence of references in Web of Science
+#'
+#' Reads a text file of citations, builds queries, and checks existence via Starter API.
+#'
+#' @param txt_file Path to text file with one citation per line.
+#' @param out_csv Path to output CSV file.
+#' @return Tibble with verification results.
+#' @importFrom readr read_lines write_csv
+#' @importFrom dplyr bind_rows
+#' @importFrom tibble tibble
 verify_wos_existence <- function(txt_file, out_csv = "wos_verification_results.csv") {
   refs <- read_lines(txt_file)
   refs <- refs[nchar(trimws(refs)) > 0]
@@ -231,27 +277,4 @@ verify_wos_existence <- function(txt_file, out_csv = "wos_verification_results.c
   df <- bind_rows(results)
   write_csv(df, out_csv)
   df
-}
-
-
-# ---- If you want to run from the command line ----
-# Example:
-#   Rscript verify_wos_existence.R refs.txt results.csv
-if (isFALSE(interactive())) {
-  args <- commandArgs(trailingOnly = TRUE)
-  if (length(args) >= 1) {
-  in_file  <- args[[1]]
-  out_file <- if (length(args) >= 2) args[[2]] else sub("\\.txt", "_results.csv", basename(in_file))
-  message(sprintf("Reading: %s", in_file))
-  out <- verify_wos_existence(in_file, out_file)
-  message(sprintf("Wrote: %s  (%d rows)", out_file, nrow(out)))
-  } else {
-    stop("Provide input and (optional) output file names.\n",
-         "E.g.: 'Rscript verify_wos_existence.R refs.txt' OR 'Rscript verify_wos_existence.R refs.txt results.csv'")
-  }
-} else {
-  in_file  <- "AnaJAErefs.txt"
-  out_file <- sub("\\.txt", "_results.csv", basename(in_file))
-  message(sprintf("Reading: %s", in_file))
-  out <- verify_wos_existence(in_file, out_file)
 }
