@@ -47,7 +47,7 @@ if (isFALSE(interactive())) {
          "E.g.: 'Rscript verify_wos_existence.R refs.txt' OR 'Rscript verify_wos_existence.R refs.txt results.csv'")
   }
 } else {
-  in_file  <- "AnaJAErefs.txt"
+  in_file  <- "refs.txt"
   out_file <- sub("\\.txt", "_results.csv", basename(in_file))
   message(sprintf("Reading: %s", in_file))
   out <- verify_wos_existence(in_file, out_file)
