@@ -1,0 +1,4 @@
+Åkesson, A., Curtsdotter, A., Eklöf, A., Ebenman, B., Norberg, J., & Barabás, G. (2021). The importance of species interactions in eco-evolutionary community dynamics under climate change. Nature Communications, 12(1), 4759. https://doi.org/10.1038/s41467-021-24977-x
+Allen, C. R., Forys, E. A., & Holling, C. S. (1999). Body Mass Patterns Predict Invasions and Extinctions in Transforming Landscapes. Ecosystems, 2(2), 114–121. https://doi.org/10.1007/s100219900063
+Allen, C. R., Gunderson, L., & Johnson, A. R. (2005). The Use of Discontinuities and Functional Groups to Assess Relative Resilience in Complex Systems. Ecosystems, 8(8), 958–966. https://doi.org/10.1007/s10021-005-0147-x
+Allen, C. R., Gunderson, L., & Forys, E. A. (2005). Ecological resilience across scales. Ecosystems, 8(7), 958–966.
